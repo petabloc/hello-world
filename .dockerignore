@@ -1,0 +1,14 @@
+# ignore hidden files
+.*
+
+# ignore docker-compose files
+docker-compose.*
+
+# ignore following files
+Dockerfile
+*.json
+LICENSE
+README.md
+
+# ignore following folders
+docs

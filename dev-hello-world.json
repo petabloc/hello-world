@@ -1,0 +1,43 @@
+{
+  "executionRoleArn": "arn:aws:iam::524456931475:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "portMappings": [
+        {
+          "hostPort": 0,
+          "protocol": "tcp",
+          "containerPort": 80
+        }
+      ],
+      "cpu": 0,
+      "environment": [
+        {
+          "name" : "AWS_DEFAULT_REGION",
+          "value" : "us-west-2"
+         },
+         {
+          "name" : "ENV",
+          "value" : "dev"
+         },
+        {
+          "name" : "NGINX_PORT",
+          "value" : "80"
+        }
+      ],
+      "mountPoints": [],
+      "secrets" : [],
+      "image": "XXXXXXX.dkr.ecr.us-west-2.amazonaws.com/hello-world:CIRCLECIGIT",
+      "startTimeout": 600,
+      "name": "hello-world"
+    }
+  ],
+  "placementConstraints": [],
+  "memory": "2048",
+  "taskRoleArn": "arn:aws:iam::524456931475:role/ecsTaskExecutionRole",
+  "requiresCompatibilities": [
+    "EC2"
+  ],
+  "family": "hello-world",
+  "cpu": "512",
+  "volumes": []
+}
