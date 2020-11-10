@@ -1,0 +1,171 @@
+version: 2.1
+
+orbs:
+  aws-ecr: circleci/aws-ecr@6.12.2
+  aws-ecs: circleci/aws-ecs@1.3.0
+  aws-cli: circleci/aws-cli@1.2.1
+
+## Anchors
+contexts: &contexts
+  context: Globals
+filter-pullRequest: &filter-pullRequest
+  filters:
+    branches:
+      ignore: master
+    tags:
+      ignore: /.*/
+filter-masterOnly: &filter-devOnly
+  filters:
+    branches:
+      only: master
+filter-prodOnly: &filter-prodOnly
+  filters:
+    tags:
+      only: /^prod.*/
+    branches:
+      ignore: /.*/
+aws-defaults: &aws-defaults
+  awsAccessKeyId:
+    default: DEV_KEY_ID
+    type: env_var_name
+  awsSecretAccessKey:
+    default: DEV_ACCESS_KEY
+    type: env_var_name
+  awsRegion:
+    default: AWS_REGION
+    type: env_var_name
+## Workflow
+workflows:
+  pull_request:
+    jobs:
+      - pull_request:
+          <<: *contexts
+          <<: *filter-pullRequest
+  build_dev:
+    jobs:
+      - buildEcr:
+          name: build_dev
+          ecrTag: latest,${CIRCLE_SHA1}
+          <<: *contexts
+          <<: *filter-devOnly
+      - updateTaskDefinition:
+          name: update_task_definition_dev
+          requires:
+            - build_dev
+          <<: *contexts
+          <<: *filter-devOnly
+      - updateService:
+          name: update_service_dev
+          requires:
+            - update_task_definition_dev
+          <<: *contexts
+          <<: *filter-devOnly
+  build_prod:
+    jobs:
+      - buildEcr:
+          name: build_prod
+          ecrTag: prod-latest,${CIRCLE_SHA1},${CIRCLE_TAG}
+          <<: *contexts
+          <<: *filter-prodOnly
+      - updateTaskDefinition:
+          name: update_task_definition_prod
+          awsAccessKeyId: PROD_KEY_ID
+          awsSecretAccessKey: PROD_ACCESS_KEY
+          useTag: CIRCLE_TAG
+          jsonFilePrefix: prod
+          requires:
+            - build_prod
+          <<: *contexts
+          <<: *filter-prodOnly
+      - updateService:
+          name: update_service_prod
+          awsAccessKeyId: PROD_KEY_ID
+          awsSecretAccessKey: PROD_ACCESS_KEY
+          clusterName: PROD_ECS_CLUSTER
+          requires:
+            - update_task_definition_prod
+          <<: *contexts
+          <<: *filter-prodOnly
+jobs:
+## parameterized
+# ref: https://circleci.com/docs/2.0/reusing-config/#authoring-parameterized-jobs
+# build and push to ECR
+  buildEcr:
+    description: Runs docker build and pushes to ecr
+    parameters:
+      ecrRepo:
+        default: ${APP_NAME}
+        type: string
+      ecrTag:
+        type: string
+    docker:
+      - image: 'circleci/python:latest'
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - aws-ecr/build-and-push-image:
+          create-repo: true
+          repo: << parameters.ecrRepo >>
+          path: .
+          dockerfile: Dockerfile
+          tag: << parameters.ecrTag >>
+          aws-access-key-id: SHARED_KEY_ID
+          aws-secret-access-key: SHARED_ACCESS_KEY
+  updateTaskDefinition:
+    description: Updates ECS task definition from JSON file
+    parameters:
+      <<: *aws-defaults
+      useTag:
+        default: ${CIRCLE_SHA1}
+        type: string
+      jsonFilePrefix:
+        default: dev
+        type: string
+    docker:
+      - image: 'circleci/python:latest'
+    steps:
+      - checkout
+      - run: sudo apt-get install -y sed
+      - run: sed -i "s/CIRCLECIGIT/<< parameters.useTag >>/" << parameters.jsonFilePrefix >>-${APP_NAME}.json
+      - aws-cli/install
+      - aws-cli/setup:
+          aws-access-key-id: << parameters.awsAccessKeyId >>
+          aws-secret-access-key: << parameters.awsSecretAccessKey >>
+          aws-region: << parameters.awsRegion >>
+      - aws-ecs/update-task-definition-from-json:
+          task-definition-json: << parameters.jsonFilePrefix >>-${APP_NAME}.json
+  updateService:
+    description: Updates ECS service with latest task definition tag
+    parameters:
+      <<: *aws-defaults
+      clusterName:
+        default: DEV_ECS_CLUSTER
+        type: env_var_name
+    docker:
+      - image: 'circleci/python:latest'
+    steps:
+      - aws-cli/install
+      - aws-cli/setup:
+          aws-access-key-id: << parameters.awsAccessKeyId >>
+          aws-secret-access-key: << parameters.awsSecretAccessKey >>
+          aws-region: << parameters.awsRegion >>
+      - aws-ecs/update-service:
+          family: ${ECS_FAMILY}
+          cluster-name: << parameters.clusterName >>
+          service-name: ${ECS_FAMILY}
+          deployment-controller: CODE_DEPLOY
+          codedeploy-application-name: ${APP_NAME}
+          codedeploy-deployment-group-name: ${APP_NAME}
+          codedeploy-load-balanced-container-name: ${APP_NAME}
+          verify-revision-is-deployed: true
+  pull_request:
+    docker:
+      - image: 'circleci/python:latest'
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run:
+          name: build the image
+          command: docker build -t ${APP_NAME}:${CIRCLE_BRANCH} .
